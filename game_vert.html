@@ -1,1 +1,651 @@
-hold please
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Becky's Endless Sushi Run (Mobile)</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    body {
+      background: #050505;
+      color: #eee;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-align: center;
+      margin: 0;
+      padding: 12px 0 24px;
+    }
+    h1 {
+      margin: 4px 0;
+      font-size: 1.25rem;
+    }
+    .hint {
+      font-size: 0.8rem;
+      opacity: 0.8;
+      margin-bottom: 8px;
+    }
+    #gameContainer {
+      position: relative;
+      margin: 0 auto;
+      width: 100%;
+      max-width: 420px; /* keeps it phone-sized even on desktop */
+    }
+    canvas {
+      display: block;
+      width: 100%;        /* responsive width */
+      height: auto;       /* keep aspect ratio */
+      border: 2px solid #333;
+      background: #111;
+      border-radius: 12px;
+      box-sizing: border-box;
+    }
+    #jumpBtn {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: max(12px, env(safe-area-inset-bottom)); /* respect notches */
+      padding: 12px 32px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      border-radius: 999px;
+      border: none;
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 0 12px rgba(0, 0, 0, 0.6);
+      cursor: pointer;
+      touch-action: manipulation;
+      z-index: 10; /* overlays canvas */
+    }
+    #jumpBtn:active {
+      transform: translateX(-50%) scale(0.97);
+      background: rgba(255, 255, 255, 0.25);
+    }
+  </style>
+</head>
+<body>
+
+<h1>Becky's Endless Sushi Run</h1>
+<p class="hint">Tap / press JUMP or Space to start. JUMP to avoid hurdles & collect sushi coins.</p>
+
+<div id="gameContainer">
+  <canvas id="gameCanvas" width="360" height="640"></canvas>
+  <button id="jumpBtn">JUMP</button>
+</div>
+
+<script>
+/* ==============================
+   BASIC SETUP (PORTRAIT)
+============================== */
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+const jumpBtn = document.getElementById("jumpBtn");
+
+const GAME_WIDTH = canvas.width;   // 360
+const GAME_HEIGHT = canvas.height; // 640
+
+const GROUND_HEIGHT = 40;
+const GROUND_Y = GAME_HEIGHT - GROUND_HEIGHT;
+
+/* ==============================
+   BACKGROUND (PARALLAX, SCALED)
+============================== */
+const bgImg = new Image();
+bgImg.src = "assets/bg.png";
+
+// logical tiling width = screen width
+const BG_WIDTH = GAME_WIDTH;
+let bgX = 0;
+
+/* ==============================
+   TITLE SCREEN
+============================== */
+const titleImg = new Image();
+titleImg.src = "assets/titlescreen.png";
+let titleBlinkTimer = 0;
+
+/* ==============================
+   PLAYER (RUN + JUMP)
+============================== */
+const PLAYER_WIDTH = 72;
+const PLAYER_HEIGHT = 48;
+
+// jump sprite is 25% larger
+const JUMP_WIDTH = Math.round(PLAYER_WIDTH * 1.25);   // 90
+const JUMP_HEIGHT = Math.round(PLAYER_HEIGHT * 1.25); // 60
+
+// run animation frames
+const runFrames = [];
+for (let i = 1; i <= 9; i++) {
+  const img = new Image();
+  img.src = `assets/run${i}.png`;
+  runFrames.push(img);
+}
+
+// jump frame
+const jumpImg = new Image();
+jumpImg.src = "assets/jump1.png";
+
+let runFrameIndex = 0;
+let runFrameTimer = 0;
+const RUN_FRAME_DURATION = 0.07;
+
+const player = {
+  x: 60,
+  y: GROUND_Y - PLAYER_HEIGHT,
+  width: PLAYER_WIDTH,
+  height: PLAYER_HEIGHT,
+  vy: 0,
+  jumpStrength: 20,
+  onGround: true
+};
+
+const GRAVITY = 70;
+
+/* ==============================
+   OBSTACLES (ADAPTED TO VERTICAL)
+============================== */
+const OBSTACLE_WIDTH = 22;
+const OBSTACLE_MIN_HEIGHT = 45;
+const OBSTACLE_MAX_HEIGHT = 130;
+
+let obstacles = [];
+let obstacleTimer = 0;
+let obstacleInterval = 1.5;
+
+const hurdleImg = new Image();
+hurdleImg.src = "assets/hurdle.png";
+
+/* ==============================
+   COINS
+============================== */
+let coins = [];
+let coinTimer = 0;
+let coinInterval = 1.0;
+
+const coinImages = [];
+const coinValues = [1, 2, 3, 4, 5];
+
+for (let i = 1; i <= 5; i++) {
+  const img = new Image();
+  img.src = `assets/coin${i}.png`;
+  coinImages.push(img);
+}
+
+/* ==============================
+   AUDIO
+============================== */
+const sfx = {
+  eat:      new Audio("assets/sfx/cat_eat.wav"),
+  fail:     new Audio("assets/sfx/cat_fail.wav"),
+  jump:     new Audio("assets/sfx/cat_jump.wav"),
+  running:  new Audio("assets/sfx/cat_running.wav"),
+  gameover: new Audio("assets/sfx/game_over.wav"),
+  music:    new Audio("assets/sfx/musicloop.wav")
+};
+
+sfx.music.loop = true;
+sfx.running.loop = true;
+
+sfx.music.volume = 0.5;
+sfx.running.volume = 0.6;
+sfx.jump.volume = 0.8;
+sfx.eat.volume = 0.8;
+sfx.fail.volume = 0.9;
+sfx.gameover.volume = 0.9;
+
+let audioInitialized = false;
+function initAudioIfNeeded() {
+  if (audioInitialized) return;
+  audioInitialized = true;
+  try {
+    sfx.music.currentTime = 0;
+    sfx.music.play();
+  } catch (e) {
+    audioInitialized = false; // will retry on next input
+  }
+}
+
+/* ==============================
+   GAME STATE
+============================== */
+let gameState = "title"; // "title" | "playing" | "gameOver"
+let lastTime = 0;
+let score = 0;
+let coinsCollected = 0;
+let speedMultiplier = 1;
+
+/* ==============================
+   RESET GAME
+============================== */
+function resetGame() {
+  obstacles = [];
+  coins = [];
+  score = 0;
+  coinsCollected = 0;
+  speedMultiplier = 1;
+
+  obstacleTimer = 0;
+  coinTimer = 0;
+
+  player.y = GROUND_Y - player.height;
+  player.vy = 0;
+  player.onGround = true;
+
+  bgX = 0;
+  runFrameIndex = 0;
+  runFrameTimer = 0;
+
+  sfx.running.pause();  sfx.running.currentTime = 0;
+  sfx.fail.pause();     sfx.fail.currentTime = 0;
+  sfx.gameover.pause(); sfx.gameover.currentTime = 0;
+  sfx.jump.pause();     sfx.jump.currentTime = 0;
+  sfx.eat.pause();      sfx.eat.currentTime = 0;
+
+  if (audioInitialized && sfx.music.paused) {
+    sfx.music.play().catch(()=>{});
+  }
+
+  gameState = "playing";
+}
+
+/* ==============================
+   SPAWNERS
+============================== */
+function spawnObstacle() {
+  const height =
+    OBSTACLE_MIN_HEIGHT +
+    Math.random() * (OBSTACLE_MAX_HEIGHT - OBSTACLE_MIN_HEIGHT);
+
+  obstacles.push({
+    x: GAME_WIDTH + 20,
+    y: GROUND_Y - height,
+    width: OBSTACLE_WIDTH,
+    height,
+    speed: 220 + Math.random() * 60
+  });
+}
+
+function spawnCoin() {
+  const i = Math.floor(Math.random() * coinImages.length);
+  const img = coinImages[i];
+  const value = coinValues[i];
+
+  const size = 30;
+  const maxJumpAbove = 160;
+  const y = GROUND_Y - size - (Math.random() * maxJumpAbove);
+
+  coins.push({
+    x: GAME_WIDTH + 40,
+    y,
+    size,
+    img,
+    value,
+    speed: 210
+  });
+}
+
+/* ==============================
+   INPUT
+============================== */
+function handleInput() {
+  initAudioIfNeeded();
+
+  if (gameState === "title") {
+    resetGame();
+    return;
+  }
+
+  if (gameState === "gameOver") {
+    resetGame();
+    return;
+  }
+
+  if (player.onGround) {
+    player.vy = -player.jumpStrength;
+    player.onGround = false;
+    sfx.jump.currentTime = 0;
+    sfx.jump.play().catch(()=>{});
+  }
+}
+
+// keyboard (desktop or BT keyboard)
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" || e.key === " ") {
+    e.preventDefault();
+    handleInput();
+  }
+});
+
+// canvas tap/click
+canvas.addEventListener("mousedown", handleInput);
+canvas.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  handleInput();
+}, { passive: false });
+
+// JUMP button
+jumpBtn.addEventListener("click", handleInput);
+jumpBtn.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  handleInput();
+}, { passive: false });
+
+/* ==============================
+   UPDATE
+============================== */
+function update(dt) {
+  if (gameState === "title") {
+    titleBlinkTimer += dt;
+    return;
+  }
+
+  if (gameState !== "playing") return;
+
+  // background parallax
+  bgX -= dt * 60;
+  if (bgX <= -BG_WIDTH) bgX += BG_WIDTH;
+
+  // speed ramp
+  speedMultiplier += dt * 0.02;
+
+  // gravity
+  player.vy += GRAVITY * dt;
+  player.y += player.vy;
+
+  // ground collision
+  if (player.y + player.height >= GROUND_Y) {
+    player.y = GROUND_Y - player.height;
+    player.vy = 0;
+    player.onGround = true;
+  } else {
+    player.onGround = false;
+  }
+
+  // running SFX
+  if (player.onGround && gameState === "playing") {
+    if (audioInitialized && sfx.running.paused) {
+      sfx.running.currentTime = 0;
+      sfx.running.play().catch(()=>{});
+    }
+  } else {
+    if (!sfx.running.paused) {
+      sfx.running.pause();
+      sfx.running.currentTime = 0;
+    }
+  }
+
+  // run animation on ground
+  if (player.onGround) {
+    runFrameTimer += dt;
+    if (runFrameTimer >= RUN_FRAME_DURATION) {
+      runFrameTimer -= RUN_FRAME_DURATION;
+      runFrameIndex = (runFrameIndex + 1) % runFrames.length;
+    }
+  }
+
+  // obstacles
+  obstacleTimer += dt;
+  let spawnTime = obstacleInterval / speedMultiplier;
+  if (spawnTime < 0.9) spawnTime = 0.9;
+
+  if (obstacleTimer >= spawnTime) {
+    spawnObstacle();
+    obstacleTimer = 0;
+  }
+
+  // coins
+  coinTimer += dt;
+  let coinTime = coinInterval / speedMultiplier;
+  if (coinTime < 0.55) coinTime = 0.55;
+
+  if (coinTimer >= coinTime) {
+    if (Math.random() < 0.7) spawnCoin();
+    coinTimer = 0;
+  }
+
+  // move
+  obstacles.forEach(o => o.x -= o.speed * dt * speedMultiplier);
+  coins.forEach(c => c.x -= c.speed * dt * speedMultiplier);
+
+  // cleanup
+  obstacles = obstacles.filter(o => o.x + o.width > 0);
+  coins = coins.filter(c => c.x + c.size > 0);
+
+  // obstacle collisions
+  for (const o of obstacles) {
+    if (rectsCollide(player, o)) {
+      if (!sfx.running.paused) {
+        sfx.running.pause();
+        sfx.running.currentTime = 0;
+      }
+      if (audioInitialized) {
+        sfx.fail.currentTime = 0;
+        sfx.fail.play().catch(()=>{});
+        setTimeout(() => {
+          sfx.gameover.currentTime = 0;
+          sfx.gameover.play().catch(()=>{});
+        }, 150);
+      }
+      gameState = "gameOver";
+      return;
+    }
+  }
+
+  // coin collisions
+  for (let i = coins.length - 1; i >= 0; i--) {
+    const c = coins[i];
+    if (rectsCollide(player, { x: c.x, y: c.y, width: c.size, height: c.size })) {
+      score += c.value;
+      coinsCollected++;
+      coins.splice(i, 1);
+
+      if (audioInitialized) {
+        sfx.eat.currentTime = 0;
+        sfx.eat.play().catch(()=>{});
+      }
+    }
+  }
+
+  // score
+  score += dt * 10 * speedMultiplier;
+}
+
+/* ==============================
+   HELPERS
+============================== */
+function rectsCollide(a, b) {
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+/* ==============================
+   DRAW HUD
+============================== */
+function drawHUD() {
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(0, 0, GAME_WIDTH, 40);
+
+  ctx.fillStyle = "#eee";
+  ctx.font = "14px system-ui";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText("Score: " + Math.floor(score), 10, 20);
+
+  ctx.textAlign = "right";
+  ctx.fillText("Coins: " + coinsCollected, GAME_WIDTH - 10, 20);
+  ctx.restore();
+}
+
+/* ==============================
+   DRAW TITLE
+============================== */
+function drawTitleScreen() {
+  if (titleImg.complete && titleImg.naturalWidth > 0) {
+    ctx.drawImage(titleImg, 0, 0, GAME_WIDTH, GAME_HEIGHT);
+  } else {
+    ctx.fillStyle = "#222";
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    ctx.fillStyle = "#fff";
+    ctx.font = "26px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("BECKY'S ENDLESS SUSHI RUN", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20);
+  }
+
+  const blinkOn = Math.floor(titleBlinkTimer * 2) % 2 === 0;
+  if (blinkOn) {
+    ctx.fillStyle = "#fff";
+    ctx.font = "18px system-ui";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(
+      "Tap or Press JUMP to Start",
+      GAME_WIDTH / 2,
+      GAME_HEIGHT - 60
+    );
+  }
+}
+
+/* ==============================
+   DRAW PLAYER
+============================== */
+function drawPlayer() {
+  if (!player.onGround) {
+    // jump sprite
+    if (jumpImg.complete && jumpImg.naturalWidth > 0) {
+      ctx.save();
+      const cx = player.x + player.width / 2;
+      const cy = player.y + player.height / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate(-Math.PI / 4);
+      ctx.drawImage(
+        jumpImg,
+        -JUMP_WIDTH / 2,
+        -JUMP_HEIGHT / 2,
+        JUMP_WIDTH,
+        JUMP_HEIGHT
+      );
+      ctx.restore();
+    } else {
+      ctx.fillStyle = "#ffeb3b";
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+    }
+    return;
+  }
+
+  const frame = runFrames[runFrameIndex];
+  if (frame && frame.complete && frame.naturalWidth > 0) {
+    ctx.drawImage(frame, player.x, player.y, player.width, player.height);
+  } else {
+    ctx.fillStyle = "#4caf50";
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+  }
+}
+
+/* ==============================
+   GAME OVER SCREEN
+============================== */
+function drawGameOverScreen() {
+  // background
+  if (bgImg.complete && bgImg.naturalWidth > 0) {
+    const sw = bgImg.naturalWidth;
+    const sh = bgImg.naturalHeight;
+    ctx.drawImage(bgImg, 0, 0, sw, sh, bgX, 0, BG_WIDTH, GAME_HEIGHT);
+    ctx.drawImage(bgImg, 0, 0, sw, sh, bgX + BG_WIDTH, 0, BG_WIDTH, GAME_HEIGHT);
+  } else {
+    ctx.fillStyle = "#222";
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  }
+
+  ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+  ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+  ctx.fillStyle = "#fff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.font = "30px system-ui";
+  ctx.fillText("GAME OVER", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 60);
+
+  ctx.font = "20px system-ui";
+  ctx.fillText("Final Score: " + Math.floor(score), GAME_WIDTH / 2, GAME_HEIGHT / 2 - 10);
+  ctx.fillText("Coins: " + coinsCollected, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 22);
+
+  ctx.font = "18px system-ui";
+  ctx.fillText("Tap or Press JUMP to Restart", GAME_WIDTH / 2, GAME_HEIGHT / 2 + 65);
+}
+
+/* ==============================
+   MAIN DRAW
+============================== */
+function draw() {
+  ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+  if (gameState === "title") {
+    drawTitleScreen();
+    return;
+  }
+
+  if (gameState === "gameOver") {
+    drawGameOverScreen();
+    return;
+  }
+
+  // background (scaled)
+  if (bgImg.complete && bgImg.naturalWidth > 0) {
+    const sw = bgImg.naturalWidth;
+    const sh = bgImg.naturalHeight;
+    ctx.drawImage(bgImg, 0, 0, sw, sh, bgX, 0, BG_WIDTH, GAME_HEIGHT);
+    ctx.drawImage(bgImg, 0, 0, sw, sh, bgX + BG_WIDTH, 0, BG_WIDTH, GAME_HEIGHT);
+  } else {
+    ctx.fillStyle = "#222";
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+  }
+
+  drawPlayer();
+
+  obstacles.forEach((o) => {
+    if (hurdleImg.complete && hurdleImg.naturalWidth > 0) {
+      ctx.drawImage(hurdleImg, o.x, o.y, o.width, o.height);
+    } else {
+      ctx.fillStyle = "#e53935";
+      ctx.fillRect(o.x, o.y, o.width, o.height);
+    }
+  });
+
+  coins.forEach((c) => {
+    if (c.img.complete && c.img.naturalWidth > 0) {
+      ctx.drawImage(c.img, c.x, c.y, c.size, c.size);
+    } else {
+      ctx.fillStyle = "#ffeb3b";
+      ctx.fillRect(c.x, c.y, c.size, c.size);
+    }
+  });
+
+  drawHUD();
+}
+
+/* ==============================
+   GAME LOOP
+============================== */
+function loop(timestamp) {
+  if (!lastTime) lastTime = timestamp;
+  const dt = (timestamp - lastTime) / 1000;
+  lastTime = timestamp;
+
+  update(dt);
+  draw();
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
