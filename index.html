@@ -32,7 +32,7 @@
 <body>
 
 <h1>Ugly Runner</h1>
-<p class="hint">Tap / Click or press Space to jump. Avoid hurdles, collect coins.</p>
+<p class="hint">Tap / Click or press Space to start. Jump to avoid hurdles & collect coins.</p>
 
 <canvas id="gameCanvas" width="800" height="400"></canvas>
 
@@ -47,18 +47,33 @@
   const GROUND_HEIGHT = 20;
   const GROUND_Y = GAME_HEIGHT - GROUND_HEIGHT;
 
-  // --- BACKGROUND (1600×400) ---
+  // --- BACKGROUND (parallax, 1600 × 400) ---
   const BG_WIDTH = 1600;
+  const BG_HEIGHT = 400;
   const bgImg = new Image();
   bgImg.src = "assets/bg.png";
   let bgX = 0;
 
-  // --- PLAYER SPRITE ---
+  // --- TITLE SCREEN ---
+  const titleImg = new Image();
+  titleImg.src = "assets/titlescreen.png";
+  let titleBlinkTimer = 0;
+
+  // --- PLAYER (animated run sprites) ---
   const PLAYER_WIDTH = 80;
   const PLAYER_HEIGHT = 54;
 
-  const playerImg = new Image();
-  playerImg.src = "assets/player.png";
+  const runFrames = [];
+  const RUN_FRAME_COUNT = 9;
+  for (let i = 1; i <= RUN_FRAME_COUNT; i++) {
+    const img = new Image();
+    img.src = `assets/run${i}.png`;
+    runFrames.push(img);
+  }
+
+  let runFrameIndex = 0;
+  let runFrameTimer = 0;
+  const RUN_FRAME_DURATION = 0.07; // seconds per frame (~14 fps)
 
   const player = {
     x: 80,
@@ -72,11 +87,10 @@
 
   const GRAVITY = 60;
 
-  // Obstacles
+  // Obstacles (hurdles)
   const OBSTACLE_WIDTH = 24;
   const OBSTACLE_MIN_HEIGHT = 30;
   const OBSTACLE_MAX_HEIGHT = 100;
-
   let obstacles = [];
   let obstacleTimer = 0;
   let obstacleInterval = 1.4;
@@ -93,16 +107,19 @@
   const coinValues = [1, 2, 3, 4, 5];
 
   for (let i = 1; i <= 5; i++) {
-    let img = new Image();
+    const img = new Image();
     img.src = `assets/coin${i}.png`;
     coinImages.push(img);
   }
 
   // Game state
+  // "title" → show title screen
+  // "playing" → active game
+  // "gameOver" → after collision
+  let gameState = "title";
   let lastTime = 0;
   let score = 0;
   let coinsCollected = 0;
-  let gameState = "playing";
   let speedMultiplier = 1;
 
   function resetGame() {
@@ -120,6 +137,9 @@
     player.onGround = true;
 
     bgX = 0;
+    runFrameIndex = 0;
+    runFrameTimer = 0;
+
     gameState = "playing";
   }
 
@@ -138,9 +158,9 @@
   }
 
   function spawnCoin() {
-    let i = Math.floor(Math.random() * 5);
-    let img = coinImages[i];
-    let value = coinValues[i];
+    const index = Math.floor(Math.random() * coinImages.length);
+    const img = coinImages[index];
+    const value = coinValues[index];
 
     const size = 32;
     const y = GROUND_Y - size - (Math.random() * 120);
@@ -155,42 +175,62 @@
     });
   }
 
-  function handleJumpOrRestart() {
-    if (gameState === "gameOver") {
+  function handleInput() {
+    if (gameState === "title") {
+      // Move from title screen into game
       resetGame();
       return;
     }
 
+    if (gameState === "gameOver") {
+      // Restart game from game over
+      resetGame();
+      return;
+    }
+
+    // In-game jump
     if (player.onGround) {
       player.vy = -player.jumpStrength;
       player.onGround = false;
     }
   }
 
-  // Input
+  // Input listeners
   document.addEventListener("keydown", (e) => {
     if (e.code === "Space" || e.key === " ") {
       e.preventDefault();
-      handleJumpOrRestart();
+      handleInput();
     }
   });
 
-  canvas.addEventListener("mousedown", handleJumpOrRestart);
+  canvas.addEventListener("mousedown", handleInput);
   canvas.addEventListener("touchstart", (e) => {
     e.preventDefault();
-    handleJumpOrRestart();
+    handleInput();
   }, { passive: false });
 
   function update(dt) {
-    if (gameState !== "playing") return;
+    if (gameState === "title") {
+      // Simple blink timer for "Press Start" text
+      titleBlinkTimer += dt;
+      return;
+    }
+
+    if (gameState !== "playing") {
+      // No updates while game over (frozen frame)
+      return;
+    }
 
     // Background parallax
     bgX -= dt * 60;
-    if (bgX <= -BG_WIDTH) bgX += BG_WIDTH;
+    if (bgX <= -BG_WIDTH) {
+      bgX += BG_WIDTH;
+    }
 
+    // Speed ramp
     speedMultiplier += dt * 0.025;
 
-    // Player gravity
+    // Player physics
     player.vy += GRAVITY * dt;
     player.y += player.vy;
 
@@ -198,6 +238,13 @@
       player.y = GROUND_Y - player.height;
       player.vy = 0;
       player.onGround = true;
+    }
+
+    // Running animation
+    runFrameTimer += dt;
+    if (runFrameTimer >= RUN_FRAME_DURATION) {
+      runFrameTimer -= RUN_FRAME_DURATION;
+      runFrameIndex = (runFrameIndex + 1) % runFrames.length;
     }
 
     // Obstacles
@@ -216,28 +263,36 @@
     if (coinTime < 0.45) coinTime = 0.45;
 
     if (coinTimer >= coinTime) {
-      if (Math.random() < 0.65) spawnCoin();
+      if (Math.random() < 0.65) {
+        spawnCoin();
+      }
       coinTimer = 0;
     }
 
-    // Move objects
-    obstacles.forEach(o => o.x -= o.speed * dt * speedMultiplier);
-    coins.forEach(c => c.x -= c.speed * dt * speedMultiplier);
+    // Move obstacles and coins
+    obstacles.forEach((o) => {
+      o.x -= o.speed * dt * speedMultiplier;
+    });
 
-    // Cleanup
-    obstacles = obstacles.filter(o => o.x + o.width > 0);
-    coins = coins.filter(c => c.x + c.size > 0);
+    coins.forEach((c) => {
+      c.x -= c.speed * dt * speedMultiplier;
+    });
 
-    // Collisions
-    for (let o of obstacles) {
+    // Cleanup offscreen
+    obstacles = obstacles.filter((o) => o.x + o.width > 0);
+    coins = coins.filter((c) => c.x + c.size > 0);
+
+    // Collisions: obstacles
+    for (const o of obstacles) {
       if (rectsCollide(player, o)) {
         gameState = "gameOver";
         break;
       }
     }
 
+    // Collisions: coins
     for (let i = coins.length - 1; i >= 0; i--) {
-      let c = coins[i];
+      const c = coins[i];
       if (rectsCollide(player, { x: c.x, y: c.y, width: c.size, height: c.size })) {
         score += c.value;
         coinsCollected++;
@@ -245,6 +300,7 @@
       }
     }
 
+    // Distance score
     score += dt * 10 * speedMultiplier;
   }
 
@@ -259,60 +315,140 @@
 
   function drawHUD() {
     ctx.save();
+
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fillRect(0, 0, GAME_WIDTH, 40);
+
     ctx.fillStyle = "#eee";
-    ctx.font = "16px system-ui";
+    ctx.font = "16px system-ui, sans-serif";
     ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
     ctx.fillText("Score: " + Math.floor(score), 12, 20);
+
     ctx.textAlign = "right";
     ctx.fillText("Coins: " + coinsCollected, GAME_WIDTH - 12, 20);
+
     ctx.restore();
+  }
+
+  function drawTitleScreen() {
+    // Draw title background
+    if (titleImg.complete && titleImg.naturalWidth > 0) {
+      ctx.drawImage(titleImg, 0, 0, GAME_WIDTH, GAME_HEIGHT);
+    } else {
+      // Fallback background if title image not ready
+      ctx.fillStyle = "#222";
+      ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+      ctx.fillStyle = "#fff";
+      ctx.font = "32px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("UGLY RUNNER", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20);
+    }
+
+    // Blinking "Press Start" text
+    const blinkOn = Math.floor(titleBlinkTimer * 2) % 2 === 0; // toggles every 0.5s
+    if (blinkOn) {
+      ctx.fillStyle = "#fff";
+      ctx.font = "20px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(
+        "Press Space or Click to Start",
+        GAME_WIDTH / 2,
+        GAME_HEIGHT - 40
+      );
+    }
+  }
+
+  function drawPlayer() {
+    const currentFrame = runFrames[runFrameIndex];
+
+    if (currentFrame && currentFrame.complete && currentFrame.naturalWidth > 0) {
+      ctx.drawImage(
+        currentFrame,
+        player.x,
+        player.y,
+        player.width,
+        player.height
+      );
+    } else {
+      // Fallback rectangle
+      ctx.fillStyle = "#4caf50";
+      ctx.fillRect(player.x, player.y, player.width, player.height);
+    }
   }
 
   function draw() {
     ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-    // Background
-    ctx.drawImage(bgImg, bgX, 0, BG_WIDTH, 400);
-    ctx.drawImage(bgImg, bgX + BG_WIDTH, 0, BG_WIDTH, 400);
-
-    // Player (now sprite)
-    if (playerImg.complete && playerImg.naturalWidth > 0) {
-      ctx.drawImage(playerImg, player.x, player.y, player.width, player.height);
-    } else {
-      ctx.fillStyle = "#4caf50";
-      ctx.fillRect(player.x, player.y, player.width, player.height);
+    if (gameState === "title") {
+      drawTitleScreen();
+      return;
     }
 
+    // Background
+    if (bgImg.complete && bgImg.naturalWidth > 0) {
+      ctx.drawImage(bgImg, bgX, 0, BG_WIDTH, BG_HEIGHT);
+      ctx.drawImage(bgImg, bgX + BG_WIDTH, 0, BG_WIDTH, BG_HEIGHT);
+    } else {
+      ctx.fillStyle = "#222";
+      ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    }
+
+    // Invisible ground (no draw, only physics)
+
+    // Player (running sprite)
+    drawPlayer();
+
     // Obstacles
-    obstacles.forEach(o => {
-      ctx.drawImage(hurdleImg, o.x, o.y, o.width, o.height);
+    obstacles.forEach((o) => {
+      if (hurdleImg.complete && hurdleImg.naturalWidth > 0) {
+        ctx.drawImage(hurdleImg, o.x, o.y, o.width, o.height);
+      } else {
+        ctx.fillStyle = "#e53935";
+        ctx.fillRect(o.x, o.y, o.width, o.height);
+      }
     });
 
     // Coins
-    coins.forEach(c => {
-      ctx.drawImage(c.img, c.x, c.y, c.size, c.size);
+    coins.forEach((c) => {
+      if (c.img.complete && c.img.naturalWidth > 0) {
+        ctx.drawImage(c.img, c.x, c.y, c.size, c.size);
+      } else {
+        ctx.fillStyle = "#ffeb3b";
+        ctx.fillRect(c.x, c.y, c.size, c.size);
+      }
     });
 
-    drawHUD();
+    // HUD during play & game over
+    if (gameState === "playing" || gameState === "gameOver") {
+      drawHUD();
+    }
 
     if (gameState === "gameOver") {
       ctx.fillStyle = "#fff";
-      ctx.font = "32px system-ui";
+      ctx.font = "32px system-ui, sans-serif";
       ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
       ctx.fillText("GAME OVER", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 10);
-      ctx.font = "18px system-ui";
-      ctx.fillText("Press Space or Click to Restart", GAME_WIDTH / 2, GAME_HEIGHT / 2 + 20);
+      ctx.font = "18px system-ui, sans-serif";
+      ctx.fillText(
+        "Press Space or Click to Restart",
+        GAME_WIDTH / 2,
+        GAME_HEIGHT / 2 + 20
+      );
     }
   }
 
-  function loop(ts) {
-    if (!lastTime) lastTime = ts;
-    let dt = (ts - lastTime) / 1000;
-    lastTime = ts;
+  function loop(timestamp) {
+    if (!lastTime) lastTime = timestamp;
+    const dt = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+
     update(dt);
     draw();
+
     requestAnimationFrame(loop);
   }
 
