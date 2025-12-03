@@ -28,11 +28,11 @@
       position: relative;
       margin: 0 auto;
       width: 100%;
-      max-width: 420px; /* keeps it phone-sized even on desktop */
+      max-width: 420px;
     }
     canvas {
       display: block;
-      width: 100%;        /* responsive width, preserves aspect ratio */
+      width: 100%;
       height: auto;
       border: 2px solid #333;
       background: #111;
@@ -54,7 +54,7 @@
       box-shadow: 0 0 12px rgba(0, 0, 0, 0.6);
       cursor: pointer;
       touch-action: manipulation;
-      z-index: 10; /* overlays canvas */
+      z-index: 10;
     }
     #jumpBtn:active {
       transform: scale(0.97);
@@ -83,7 +83,8 @@ const jumpBtn = document.getElementById("jumpBtn");
 const GAME_WIDTH = canvas.width;   // 360
 const GAME_HEIGHT = canvas.height; // 640
 
-const GROUND_HEIGHT = 40;
+// Drop floor 8px: was 40 → 32
+const GROUND_HEIGHT = 32;
 const GROUND_Y = GAME_HEIGHT - GROUND_HEIGHT;
 
 /* ==============================
@@ -92,11 +93,10 @@ const GROUND_Y = GAME_HEIGHT - GROUND_HEIGHT;
 const bgImg = new Image();
 bgImg.src = "assets/bg.png";
 
-// original art assumed 1600x400 (4:1)
 const BG_WORLD_WIDTH = 1600;
 const BG_WORLD_HEIGHT = 400;
-const BG_SCALE = GAME_HEIGHT / BG_WORLD_HEIGHT;        // scale to fill height
-const BG_TILE_WIDTH = BG_WORLD_WIDTH * BG_SCALE;       // ~2560px at runtime
+const BG_SCALE = GAME_HEIGHT / BG_WORLD_HEIGHT;
+const BG_TILE_WIDTH = BG_WORLD_WIDTH * BG_SCALE;
 let bgX = 0;
 
 /* ==============================
@@ -112,9 +112,9 @@ let titleBlinkTimer = 0;
 const PLAYER_WIDTH = 72;
 const PLAYER_HEIGHT = 48;
 
-// jump sprite is 25% larger
-const JUMP_WIDTH = Math.round(PLAYER_WIDTH * 1.25);   // 90
-const JUMP_HEIGHT = Math.round(PLAYER_HEIGHT * 1.25); // 60
+// jump sprite 25% larger
+const JUMP_WIDTH = Math.round(PLAYER_WIDTH * 1.25);
+const JUMP_HEIGHT = Math.round(PLAYER_HEIGHT * 1.25);
 
 // run animation frames
 const runFrames = [];
@@ -132,24 +132,25 @@ let runFrameIndex = 0;
 let runFrameTimer = 0;
 const RUN_FRAME_DURATION = 0.07;
 
+// stronger jump to clear obstacles
 const player = {
   x: 60,
   y: GROUND_Y - PLAYER_HEIGHT,
   width: PLAYER_WIDTH,
   height: PLAYER_HEIGHT,
   vy: 0,
-  jumpStrength: 24, // higher jump
+  jumpStrength: 28, // was 24
   onGround: true
 };
 
-const GRAVITY = 65; // slightly lighter than before
+const GRAVITY = 60; // was 65
 
 /* ==============================
    OBSTACLES
 ============================== */
 const OBSTACLE_WIDTH = 22;
 const OBSTACLE_MIN_HEIGHT = 45;
-const OBSTACLE_MAX_HEIGHT = 110; // slightly shorter
+const OBSTACLE_MAX_HEIGHT = 100; // was 110
 
 let obstacles = [];
 let obstacleTimer = 0;
@@ -189,7 +190,11 @@ const sfx = {
 sfx.music.loop = true;
 sfx.running.loop = true;
 
-sfx.music.volume = 0.5;
+// base music volumes
+const MUSIC_VOLUME_GAME = 0.5;
+const MUSIC_VOLUME_TITLE = MUSIC_VOLUME_GAME * 0.3; // 70% lower on title
+
+sfx.music.volume = MUSIC_VOLUME_TITLE;
 sfx.running.volume = 0.6;
 sfx.jump.volume = 0.8;
 sfx.eat.volume = 0.8;
@@ -202,9 +207,10 @@ function initAudioIfNeeded() {
   audioInitialized = true;
   try {
     sfx.music.currentTime = 0;
+    sfx.music.volume = MUSIC_VOLUME_TITLE;
     sfx.music.play();
   } catch (e) {
-    audioInitialized = false; // retry next input if blocked
+    audioInitialized = false;
   }
 }
 
@@ -244,8 +250,11 @@ function resetGame() {
   sfx.jump.pause();     sfx.jump.currentTime = 0;
   sfx.eat.pause();      sfx.eat.currentTime = 0;
 
-  if (audioInitialized && sfx.music.paused) {
-    sfx.music.play().catch(()=>{});
+  if (audioInitialized) {
+    if (sfx.music.paused) {
+      sfx.music.play().catch(()=>{});
+    }
+    sfx.music.volume = MUSIC_VOLUME_GAME; // louder in game
   }
 
   gameState = "playing";
@@ -336,12 +345,16 @@ jumpBtn.addEventListener("touchstart", (e) => {
 function update(dt) {
   if (gameState === "title") {
     titleBlinkTimer += dt;
+
+    if (audioInitialized && sfx.music.volume !== MUSIC_VOLUME_TITLE) {
+      sfx.music.volume = MUSIC_VOLUME_TITLE;
+    }
     return;
   }
 
   if (gameState !== "playing") return;
 
-  // background parallax in world units, scaled in draw
+  // background scroll (in world units, scaled in draw)
   bgX -= dt * 60 * BG_SCALE;
   if (bgX <= -BG_TILE_WIDTH) bgX += BG_TILE_WIDTH;
 
@@ -352,7 +365,6 @@ function update(dt) {
   player.vy += GRAVITY * dt;
   player.y += player.vy;
 
-  // ground collision
   if (player.y + player.height >= GROUND_Y) {
     player.y = GROUND_Y - player.height;
     player.vy = 0;
@@ -374,7 +386,7 @@ function update(dt) {
     }
   }
 
-  // run animation on ground
+  // run animation
   if (player.onGround) {
     runFrameTimer += dt;
     if (runFrameTimer >= RUN_FRAME_DURATION) {
@@ -403,11 +415,9 @@ function update(dt) {
     coinTimer = 0;
   }
 
-  // move objects
   obstacles.forEach(o => o.x -= o.speed * dt * speedMultiplier);
   coins.forEach(c => c.x -= c.speed * dt * speedMultiplier);
 
-  // cleanup
   obstacles = obstacles.filter(o => o.x + o.width > 0);
   coins = coins.filter(c => c.x + c.size > 0);
 
@@ -446,7 +456,6 @@ function update(dt) {
     }
   }
 
-  // score
   score += dt * 10 * speedMultiplier;
 }
 
@@ -482,11 +491,18 @@ function drawHUD() {
 }
 
 /* ==============================
-   DRAW TITLE
+   DRAW TITLE (CROPPED, NO STRETCH)
 ============================== */
 function drawTitleScreen() {
   if (titleImg.complete && titleImg.naturalWidth > 0) {
-    ctx.drawImage(titleImg, 0, 0, GAME_WIDTH, GAME_HEIGHT);
+    const iw = titleImg.naturalWidth;
+    const ih = titleImg.naturalHeight;
+    const scale = Math.max(GAME_WIDTH / iw, GAME_HEIGHT / ih); // cover, crop overflow
+    const dw = iw * scale;
+    const dh = ih * scale;
+    const dx = (GAME_WIDTH - dw) / 2;
+    const dy = (GAME_HEIGHT - dh) / 2;
+    ctx.drawImage(titleImg, dx, dy, dw, dh);
   } else {
     ctx.fillStyle = "#222";
     ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
@@ -628,7 +644,7 @@ function draw() {
   });
 
   coins.forEach((c) => {
-    if (c.img.complete && c.img.naturalWidth > 0) {
+    if (c.img.complete && c.naturalWidth > 0) {
       ctx.drawImage(c.img, c.x, c.y, c.size, c.size);
     } else {
       ctx.fillStyle = "#ffeb3b";
