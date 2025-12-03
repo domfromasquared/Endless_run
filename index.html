@@ -37,46 +37,45 @@
 <canvas id="gameCanvas" width="800" height="400"></canvas>
 
 <script>
-/* ------------------------------
-   INITIAL SETUP
------------------------------- */
+/* ==============================
+   BASIC SETUP
+============================== */
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
 const GAME_WIDTH = canvas.width;
 const GAME_HEIGHT = canvas.height;
 
-// Ground (invisible, used for physics)
 const GROUND_HEIGHT = 20;
 const GROUND_Y = GAME_HEIGHT - GROUND_HEIGHT;
 
-/* ------------------------------
+/* ==============================
    BACKGROUND (PARALLAX)
------------------------------- */
+============================== */
 const BG_WIDTH = 1600;
 const BG_HEIGHT = 400;
 const bgImg = new Image();
 bgImg.src = "assets/bg.png";
 let bgX = 0;
 
-/* ------------------------------
+/* ==============================
    TITLE SCREEN
------------------------------- */
+============================== */
 const titleImg = new Image();
 titleImg.src = "assets/titlescreen.png";
 let titleBlinkTimer = 0;
 
-/* ------------------------------
+/* ==============================
    PLAYER (RUN + JUMP SPRITES)
------------------------------- */
+============================== */
 const PLAYER_WIDTH = 80;
 const PLAYER_HEIGHT = 54;
 
-// Jump frame enlarged +25%
+// jump sprite is 25% larger
 const JUMP_WIDTH = Math.round(PLAYER_WIDTH * 1.25);   // 100
 const JUMP_HEIGHT = Math.round(PLAYER_HEIGHT * 1.25); // 68
 
-// Load run animation frames
+// run frames
 const runFrames = [];
 for (let i = 1; i <= 9; i++) {
   const img = new Image();
@@ -84,13 +83,13 @@ for (let i = 1; i <= 9; i++) {
   runFrames.push(img);
 }
 
-// Jump sprite
+// jump frame
 const jumpImg = new Image();
 jumpImg.src = "assets/jump1.png";
 
 let runFrameIndex = 0;
 let runFrameTimer = 0;
-const RUN_FRAME_DURATION = 0.07; // 14 fps
+const RUN_FRAME_DURATION = 0.07; // ~14 fps
 
 const player = {
   x: 80,
@@ -104,9 +103,9 @@ const player = {
 
 const GRAVITY = 60;
 
-/* ------------------------------
+/* ==============================
    OBSTACLES
------------------------------- */
+============================== */
 const OBSTACLE_WIDTH = 24;
 const OBSTACLE_MIN_HEIGHT = 30;
 const OBSTACLE_MAX_HEIGHT = 100;
@@ -118,9 +117,9 @@ let obstacleInterval = 1.4;
 const hurdleImg = new Image();
 hurdleImg.src = "assets/hurdle.png";
 
-/* ------------------------------
+/* ==============================
    COINS
------------------------------- */
+============================== */
 let coins = [];
 let coinTimer = 0;
 let coinInterval = 0.9;
@@ -134,18 +133,56 @@ for (let i = 1; i <= 5; i++) {
   coinImages.push(img);
 }
 
-/* ------------------------------
+/* ==============================
+   AUDIO
+============================== */
+const sfx = {
+  eat:      new Audio("assets/sfx/cat_eat.wav"),
+  fail:     new Audio("assets/sfx/cat_fail.wav"),
+  jump:     new Audio("assets/sfx/cat_jump.wav"),
+  running:  new Audio("assets/sfx/cat_running.wav"),
+  gameover: new Audio("assets/sfx/game_over.wav"),
+  music:    new Audio("assets/sfx/musicloop.wav")
+};
+
+// loop flags
+sfx.music.loop = true;
+sfx.running.loop = true;
+
+// optional volumes
+sfx.music.volume = 0.5;
+sfx.running.volume = 0.6;
+sfx.jump.volume = 0.8;
+sfx.eat.volume = 0.8;
+sfx.fail.volume = 0.9;
+sfx.gameover.volume = 0.9;
+
+// to comply with browser autoplay rules, start on first user input
+let audioInitialized = false;
+function initAudioIfNeeded() {
+  if (audioInitialized) return;
+  audioInitialized = true;
+  try {
+    sfx.music.currentTime = 0;
+    sfx.music.play();
+  } catch (e) {
+    // ignore errors (e.g. blocked autoplay); will try again next input
+    audioInitialized = false;
+  }
+}
+
+/* ==============================
    GAME STATE
------------------------------- */
-let gameState = "title";
+============================== */
+let gameState = "title"; // "title" | "playing" | "gameOver"
 let lastTime = 0;
 let score = 0;
 let coinsCollected = 0;
 let speedMultiplier = 1;
 
-/* ------------------------------
+/* ==============================
    RESET GAME
------------------------------- */
+============================== */
 function resetGame() {
   obstacles = [];
   coins = [];
@@ -164,12 +201,27 @@ function resetGame() {
   runFrameIndex = 0;
   runFrameTimer = 0;
 
+  // stop non-looping SFX
+  sfx.fail.pause();      sfx.fail.currentTime = 0;
+  sfx.gameover.pause();  sfx.gameover.currentTime = 0;
+  sfx.jump.pause();      sfx.jump.currentTime = 0;
+  sfx.eat.pause();       sfx.eat.currentTime = 0;
+
+  // running is controlled in update(); ensure it's off at reset
+  sfx.running.pause();
+  sfx.running.currentTime = 0;
+
+  // keep music running if already started
+  if (audioInitialized && sfx.music.paused) {
+    sfx.music.play().catch(() => {});
+  }
+
   gameState = "playing";
 }
 
-/* ------------------------------
+/* ==============================
    SPAWNERS
------------------------------- */
+============================== */
 function spawnObstacle() {
   const height =
     OBSTACLE_MIN_HEIGHT +
@@ -202,10 +254,12 @@ function spawnCoin() {
   });
 }
 
-/* ------------------------------
-   CONTROL INPUT
------------------------------- */
+/* ==============================
+   INPUT
+============================== */
 function handleInput() {
+  initAudioIfNeeded();
+
   if (gameState === "title") {
     resetGame();
     return;
@@ -216,10 +270,12 @@ function handleInput() {
     return;
   }
 
-  // Jump
+  // in-game jump
   if (player.onGround) {
     player.vy = -player.jumpStrength;
     player.onGround = false;
+    sfx.jump.currentTime = 0;
+    sfx.jump.play().catch(() => {});
   }
 }
 
@@ -236,9 +292,9 @@ canvas.addEventListener("touchstart", (e) => {
   handleInput();
 }, { passive: false });
 
-/* ------------------------------
-   UPDATE LOOP
------------------------------- */
+/* ==============================
+   UPDATE
+============================== */
 function update(dt) {
   if (gameState === "title") {
     titleBlinkTimer += dt;
@@ -247,18 +303,18 @@ function update(dt) {
 
   if (gameState !== "playing") return;
 
-  // Parallax background movement
+  // background parallax
   bgX -= dt * 60;
   if (bgX <= -BG_WIDTH) bgX += BG_WIDTH;
 
-  // Speed ramp
+  // speed ramp
   speedMultiplier += dt * 0.025;
 
-  // Gravity
+  // gravity
   player.vy += GRAVITY * dt;
   player.y += player.vy;
 
-  // Ground collision
+  // ground collision
   if (player.y + player.height >= GROUND_Y) {
     player.y = GROUND_Y - player.height;
     player.vy = 0;
@@ -267,7 +323,20 @@ function update(dt) {
     player.onGround = false;
   }
 
-  // Running animation (only on ground)
+  // running SFX: loop while on ground & playing
+  if (player.onGround && gameState === "playing") {
+    if (audioInitialized && sfx.running.paused) {
+      sfx.running.currentTime = 0;
+      sfx.running.play().catch(() => {});
+    }
+  } else {
+    if (!sfx.running.paused) {
+      sfx.running.pause();
+      sfx.running.currentTime = 0;
+    }
+  }
+
+  // run animation only on ground
   if (player.onGround) {
     runFrameTimer += dt;
     if (runFrameTimer >= RUN_FRAME_DURATION) {
@@ -276,7 +345,7 @@ function update(dt) {
     }
   }
 
-  // Spawn obstacles
+  // obstacles
   obstacleTimer += dt;
   let spawnTime = obstacleInterval / speedMultiplier;
   if (spawnTime < 0.85) spawnTime = 0.85;
@@ -286,7 +355,7 @@ function update(dt) {
     obstacleTimer = 0;
   }
 
-  // Spawn coins
+  // coins
   coinTimer += dt;
   let coinTime = coinInterval / speedMultiplier;
   if (coinTime < 0.45) coinTime = 0.45;
@@ -296,39 +365,58 @@ function update(dt) {
     coinTimer = 0;
   }
 
-  // Move obstacles + coins
+  // move stuff
   obstacles.forEach(o => o.x -= o.speed * dt * speedMultiplier);
   coins.forEach(c => c.x -= c.speed * dt * speedMultiplier);
 
-  // Remove offscreen items
+  // cleanup
   obstacles = obstacles.filter(o => o.x + o.width > 0);
   coins = coins.filter(c => c.x + c.size > 0);
 
-  // Obstacle collisions
+  // obstacle collisions
   for (const o of obstacles) {
     if (rectsCollide(player, o)) {
+      // stop running sfx
+      if (!sfx.running.paused) {
+        sfx.running.pause();
+        sfx.running.currentTime = 0;
+      }
+      // play fail + game over SFX
+      if (audioInitialized) {
+        sfx.fail.currentTime = 0;
+        sfx.fail.play().catch(() => {});
+        setTimeout(() => {
+          sfx.gameover.currentTime = 0;
+          sfx.gameover.play().catch(() => {});
+        }, 150);
+      }
       gameState = "gameOver";
       return;
     }
   }
 
-  // Coin collisions
+  // coin collisions
   for (let i = coins.length - 1; i >= 0; i--) {
     const c = coins[i];
     if (rectsCollide(player, { x: c.x, y: c.y, width: c.size, height: c.size })) {
       score += c.value;
       coinsCollected++;
       coins.splice(i, 1);
+
+      if (audioInitialized) {
+        sfx.eat.currentTime = 0;
+        sfx.eat.play().catch(() => {});
+      }
     }
   }
 
-  // Score from distance
+  // distance score
   score += dt * 10 * speedMultiplier;
 }
 
-/* ------------------------------
-   COLLISION HELPER
------------------------------- */
+/* ==============================
+   HELPERS
+============================== */
 function rectsCollide(a, b) {
   return (
     a.x < b.x + b.width &&
@@ -338,9 +426,9 @@ function rectsCollide(a, b) {
   );
 }
 
-/* ------------------------------
+/* ==============================
    DRAW HUD
------------------------------- */
+============================== */
 function drawHUD() {
   ctx.save();
   ctx.fillStyle = "rgba(0,0,0,0.5)";
@@ -349,17 +437,17 @@ function drawHUD() {
   ctx.fillStyle = "#eee";
   ctx.font = "16px system-ui";
   ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
   ctx.fillText("Score: " + Math.floor(score), 12, 20);
 
   ctx.textAlign = "right";
   ctx.fillText("Coins: " + coinsCollected, GAME_WIDTH - 12, 20);
-
   ctx.restore();
 }
 
-/* ------------------------------
-   TITLE SCREEN DRAW
------------------------------- */
+/* ==============================
+   DRAW TITLE
+============================== */
 function drawTitleScreen() {
   if (titleImg.complete && titleImg.naturalWidth > 0) {
     ctx.drawImage(titleImg, 0, 0, GAME_WIDTH, GAME_HEIGHT);
@@ -369,33 +457,36 @@ function drawTitleScreen() {
     ctx.fillStyle = "#fff";
     ctx.font = "32px system-ui";
     ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
     ctx.fillText("BECKY'S ENDLESS SUSHI RUN", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20);
   }
 
-  // blinking "Press Start"
   const blinkOn = Math.floor(titleBlinkTimer * 2) % 2 === 0;
   if (blinkOn) {
     ctx.fillStyle = "#fff";
     ctx.font = "20px system-ui";
     ctx.textAlign = "center";
-    ctx.fillText("Press Space or Click to Start", GAME_WIDTH / 2, GAME_HEIGHT - 40);
+    ctx.textBaseline = "middle";
+    ctx.fillText(
+      "Press Space or Click to Start",
+      GAME_WIDTH / 2,
+      GAME_HEIGHT - 40
+    );
   }
 }
 
-/* ------------------------------
-   DRAW PLAYER (RUN + JUMP)
------------------------------- */
+/* ==============================
+   DRAW PLAYER (RUN / JUMP)
+============================== */
 function drawPlayer() {
-  // If airborne → enlarged + rotated jump sprite
   if (!player.onGround) {
+    // jump sprite, enlarged + rotated 45° CCW
     if (jumpImg.complete && jumpImg.naturalWidth > 0) {
       ctx.save();
       const cx = player.x + player.width / 2;
       const cy = player.y + player.height / 2;
-
       ctx.translate(cx, cy);
-      ctx.rotate(-Math.PI / 4); // 45° CCW
-
+      ctx.rotate(-Math.PI / 4);
       ctx.drawImage(
         jumpImg,
         -JUMP_WIDTH / 2,
@@ -403,7 +494,6 @@ function drawPlayer() {
         JUMP_WIDTH,
         JUMP_HEIGHT
       );
-
       ctx.restore();
     } else {
       ctx.fillStyle = "#ffeb3b";
@@ -412,9 +502,8 @@ function drawPlayer() {
     return;
   }
 
-  // Running animation on ground
   const frame = runFrames[runFrameIndex];
-  if (frame.complete && frame.naturalWidth > 0) {
+  if (frame && frame.complete && frame.naturalWidth > 0) {
     ctx.drawImage(frame, player.x, player.y, player.width, player.height);
   } else {
     ctx.fillStyle = "#4caf50";
@@ -422,11 +511,10 @@ function drawPlayer() {
   }
 }
 
-/* ------------------------------
+/* ==============================
    GAME OVER SCREEN
------------------------------- */
+============================== */
 function drawGameOverScreen() {
-  // Frozen background
   if (bgImg.complete && bgImg.naturalWidth > 0) {
     ctx.drawImage(bgImg, bgX, 0, BG_WIDTH, BG_HEIGHT);
     ctx.drawImage(bgImg, bgX + BG_WIDTH, 0, BG_WIDTH, BG_HEIGHT);
@@ -435,28 +523,39 @@ function drawGameOverScreen() {
     ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
   }
 
-  // Dark overlay
   ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
   ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-  // Final score block
   ctx.fillStyle = "#fff";
   ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
 
   ctx.font = "32px system-ui";
   ctx.fillText("GAME OVER", GAME_WIDTH / 2, GAME_HEIGHT / 2 - 40);
 
   ctx.font = "22px system-ui";
-  ctx.fillText("Final Score: " + Math.floor(score), GAME_WIDTH / 2, GAME_HEIGHT / 2);
-  ctx.fillText("Coins Collected: " + coinsCollected, GAME_WIDTH / 2, GAME_HEIGHT / 2 + 35);
+  ctx.fillText(
+    "Final Score: " + Math.floor(score),
+    GAME_WIDTH / 2,
+    GAME_HEIGHT / 2
+  );
+  ctx.fillText(
+    "Coins Collected: " + coinsCollected,
+    GAME_WIDTH / 2,
+    GAME_HEIGHT / 2 + 35
+  );
 
   ctx.font = "18px system-ui";
-  ctx.fillText("Press Space or Click to Restart", GAME_WIDTH / 2, GAME_HEIGHT / 2 + 75);
+  ctx.fillText(
+    "Press Space or Click to Restart",
+    GAME_WIDTH / 2,
+    GAME_HEIGHT / 2 + 75
+  );
 }
 
-/* ------------------------------
-   MAIN DRAW FUNCTION
------------------------------- */
+/* ==============================
+   MAIN DRAW
+============================== */
 function draw() {
   ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
@@ -470,7 +569,7 @@ function draw() {
     return;
   }
 
-  // Background
+  // playing
   if (bgImg.complete && bgImg.naturalWidth > 0) {
     ctx.drawImage(bgImg, bgX, 0, BG_WIDTH, BG_HEIGHT);
     ctx.drawImage(bgImg, bgX + BG_WIDTH, 0, BG_WIDTH, BG_HEIGHT);
@@ -479,10 +578,8 @@ function draw() {
     ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
   }
 
-  // Player
   drawPlayer();
 
-  // Obstacles
   obstacles.forEach((o) => {
     if (hurdleImg.complete && hurdleImg.naturalWidth > 0) {
       ctx.drawImage(hurdleImg, o.x, o.y, o.width, o.height);
@@ -492,7 +589,6 @@ function draw() {
     }
   });
 
-  // Coins
   coins.forEach((c) => {
     if (c.img.complete && c.img.naturalWidth > 0) {
       ctx.drawImage(c.img, c.x, c.y, c.size, c.size);
@@ -505,13 +601,13 @@ function draw() {
   drawHUD();
 }
 
-/* ------------------------------
+/* ==============================
    GAME LOOP
------------------------------- */
-function loop(ts) {
-  if (!lastTime) lastTime = ts;
-  const dt = (ts - lastTime) / 1000;
-  lastTime = ts;
+============================== */
+function loop(timestamp) {
+  if (!lastTime) lastTime = timestamp;
+  const dt = (timestamp - lastTime) / 1000;
+  lastTime = timestamp;
 
   update(dt);
   draw();
