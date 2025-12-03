@@ -65,7 +65,7 @@
 <body>
 
 <h1>Becky's Endless Sushi Run</h1>
-<p class="hint">Tap / press JUMP or Space to start. JUMP to avoid hurdles & collect sushi coins.</p>
+<p class="hint">Tap / press JUMP or Space to start. First tap enables music, second tap starts the run.</p>
 
 <div id="gameContainer">
   <canvas id="gameCanvas" width="360" height="640"></canvas>
@@ -83,7 +83,7 @@ const jumpBtn = document.getElementById("jumpBtn");
 const GAME_WIDTH = canvas.width;   // 360
 const GAME_HEIGHT = canvas.height; // 640
 
-// Drop floor 8px: was 40 → 32
+// Floor dropped 8px earlier
 const GROUND_HEIGHT = 32;
 const GROUND_Y = GAME_HEIGHT - GROUND_HEIGHT;
 
@@ -102,8 +102,9 @@ let bgX = 0;
 /* ==============================
    TITLE SCREEN
 ============================== */
+// use your new 1080x1920 art
 const titleImg = new Image();
-titleImg.src = "assets/titlescreen.png";
+titleImg.src = "assets/titlescreen vert.png";
 let titleBlinkTimer = 0;
 
 /* ==============================
@@ -112,11 +113,9 @@ let titleBlinkTimer = 0;
 const PLAYER_WIDTH = 72;
 const PLAYER_HEIGHT = 48;
 
-// jump sprite 25% larger
 const JUMP_WIDTH = Math.round(PLAYER_WIDTH * 1.25);
 const JUMP_HEIGHT = Math.round(PLAYER_HEIGHT * 1.25);
 
-// run animation frames
 const runFrames = [];
 for (let i = 1; i <= 9; i++) {
   const img = new Image();
@@ -124,7 +123,6 @@ for (let i = 1; i <= 9; i++) {
   runFrames.push(img);
 }
 
-// jump frame
 const jumpImg = new Image();
 jumpImg.src = "assets/jump1.png";
 
@@ -132,25 +130,24 @@ let runFrameIndex = 0;
 let runFrameTimer = 0;
 const RUN_FRAME_DURATION = 0.07;
 
-// stronger jump to clear obstacles
 const player = {
   x: 60,
   y: GROUND_Y - PLAYER_HEIGHT,
   width: PLAYER_WIDTH,
   height: PLAYER_HEIGHT,
   vy: 0,
-  jumpStrength: 28, // was 24
+  jumpStrength: 28, // boosted jump
   onGround: true
 };
 
-const GRAVITY = 60; // was 65
+const GRAVITY = 60;
 
 /* ==============================
    OBSTACLES
 ============================== */
 const OBSTACLE_WIDTH = 22;
 const OBSTACLE_MIN_HEIGHT = 45;
-const OBSTACLE_MAX_HEIGHT = 100; // was 110
+const OBSTACLE_MAX_HEIGHT = 100;
 
 let obstacles = [];
 let obstacleTimer = 0;
@@ -254,7 +251,7 @@ function resetGame() {
     if (sfx.music.paused) {
       sfx.music.play().catch(()=>{});
     }
-    sfx.music.volume = MUSIC_VOLUME_GAME; // louder in game
+    sfx.music.volume = MUSIC_VOLUME_GAME; // full volume in-game
   }
 
   gameState = "playing";
@@ -300,9 +297,13 @@ function spawnCoin() {
    INPUT
 ============================== */
 function handleInput() {
-  initAudioIfNeeded();
-
   if (gameState === "title") {
+    // First tap: enable music but stay on title
+    if (!audioInitialized) {
+      initAudioIfNeeded();
+      return;
+    }
+    // Second tap: start game
     resetGame();
     return;
   }
@@ -346,6 +347,7 @@ function update(dt) {
   if (gameState === "title") {
     titleBlinkTimer += dt;
 
+    // keep title music quieter
     if (audioInitialized && sfx.music.volume !== MUSIC_VOLUME_TITLE) {
       sfx.music.volume = MUSIC_VOLUME_TITLE;
     }
@@ -354,14 +356,14 @@ function update(dt) {
 
   if (gameState !== "playing") return;
 
-  // background scroll (in world units, scaled in draw)
+  // background scroll
   bgX -= dt * 60 * BG_SCALE;
   if (bgX <= -BG_TILE_WIDTH) bgX += BG_TILE_WIDTH;
 
   // speed ramp
   speedMultiplier += dt * 0.02;
 
-  // gravity
+  // gravity & jump
   player.vy += GRAVITY * dt;
   player.y += player.vy;
 
@@ -497,7 +499,7 @@ function drawTitleScreen() {
   if (titleImg.complete && titleImg.naturalWidth > 0) {
     const iw = titleImg.naturalWidth;
     const ih = titleImg.naturalHeight;
-    const scale = Math.max(GAME_WIDTH / iw, GAME_HEIGHT / ih); // cover, crop overflow
+    const scale = Math.max(GAME_WIDTH / iw, GAME_HEIGHT / ih); // cover
     const dw = iw * scale;
     const dh = ih * scale;
     const dx = (GAME_WIDTH - dw) / 2;
@@ -520,7 +522,12 @@ function drawTitleScreen() {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(
-      "Tap or Press JUMP to Start",
+      "Tap or Press JUMP (once) to enable music",
+      GAME_WIDTH / 2,
+      GAME_HEIGHT - 90
+    );
+    ctx.fillText(
+      "Tap again to start",
       GAME_WIDTH / 2,
       GAME_HEIGHT - 60
     );
@@ -644,7 +651,7 @@ function draw() {
   });
 
   coins.forEach((c) => {
-    if (c.img.complete && c.naturalWidth > 0) {
+    if (c.img.complete && c.img.naturalWidth > 0) {
       ctx.drawImage(c.img, c.x, c.y, c.size, c.size);
     } else {
       ctx.fillStyle = "#ffeb3b";
