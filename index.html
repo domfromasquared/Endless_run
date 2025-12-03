@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Ugly Runner Game w/ Coin Assets</title>
+  <title>Ugly Runner Game w/ Hurdles & Coin Assets</title>
   <style>
     body {
       background: #111;
@@ -32,7 +32,7 @@
 <body>
 
 <h1>Ugly Runner</h1>
-<p class="hint">Tap / Click or press Space to jump. Avoid red blocks, collect coins.</p>
+<p class="hint">Tap / Click or press Space to jump. Avoid hurdles, collect coins.</p>
 
 <canvas id="gameCanvas" width="800" height="400"></canvas>
 
@@ -59,11 +59,17 @@
 
   const GRAVITY = 60;
 
-  // Obstacles
-  const OBSTACLE_WIDTH = 24; // ✅ thin, fixed width
+  // Obstacles (hurdles)
+  const OBSTACLE_WIDTH = 24;      // fixed thin width
+  const OBSTACLE_MIN_HEIGHT = 30; // min height
+  const OBSTACLE_MAX_HEIGHT = 100; // ✅ capped peak height
   let obstacles = [];
   let obstacleTimer = 0;
   let obstacleInterval = 1.2;
+
+  // Load hurdle image (24x100 in assets)
+  const hurdleImg = new Image();
+  hurdleImg.src = "assets/hurdle.png";
 
   // Coins
   let coins = [];
@@ -72,11 +78,11 @@
 
   // Load coin images and assign values 1–5
   const coinImages = [];
-  const coinValues = [1, 2, 3, 4, 5]; // ✅ all different values
+  const coinValues = [1, 2, 3, 4, 5];
 
   for (let i = 1; i <= 5; i++) {
     const img = new Image();
-    img.src = `assets/coin${i}.png`; // expects /assets/coin1.png ... coin5.png
+    img.src = `assets/coin${i}.png`;
     coinImages.push(img);
   }
 
@@ -104,8 +110,10 @@
   }
 
   function spawnObstacle() {
-    const width = OBSTACLE_WIDTH;              // ✅ fixed thin width
-    const height = 30 + Math.random() * 80;    // variable height is okay
+    const width = OBSTACLE_WIDTH;
+    const height =
+      OBSTACLE_MIN_HEIGHT +
+      Math.random() * (OBSTACLE_MAX_HEIGHT - OBSTACLE_MIN_HEIGHT); // ✅ 30–100 px
 
     obstacles.push({
       x: GAME_WIDTH + 20,
@@ -120,9 +128,9 @@
     // Pick a random coin index 0–4
     const index = Math.floor(Math.random() * 5);
     const img = coinImages[index];
-    const value = coinValues[index]; // ✅ 1–5 based on coin#
+    const value = coinValues[index];
 
-    const size = 32; // coin render size
+    const size = 32;
     const maxJumpHeightAboveGround = 120;
     const y = GROUND_Y - size - (Math.random() * maxJumpHeightAboveGround);
 
@@ -225,7 +233,7 @@
     for (let i = coins.length - 1; i >= 0; i--) {
       const c = coins[i];
       if (rectsCollide(player, { x: c.x, y: c.y, width: c.size, height: c.size })) {
-        score += c.value;       // ✅ add coin value to score
+        score += c.value;
         coinsCollected += 1;
         coins.splice(i, 1);
       }
@@ -245,10 +253,9 @@
   }
 
   function drawHUD() {
-    // ✅ HUD fully inside the game frame
+    // HUD fully inside the game frame
     ctx.save();
 
-    // translucent bar at top
     ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
     ctx.fillRect(0, 0, GAME_WIDTH, 40);
 
@@ -265,7 +272,6 @@
   }
 
   function draw() {
-    // Clear
     ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
     // Background
@@ -280,10 +286,15 @@
     ctx.fillStyle = "#4caf50";
     ctx.fillRect(player.x, player.y, player.width, player.height);
 
-    // Obstacles
-    ctx.fillStyle = "#e53935";
+    // Obstacles (hurdles using image, stretched to height)
     obstacles.forEach(o => {
-      ctx.fillRect(o.x, o.y, o.width, o.height);
+      if (hurdleImg.complete && hurdleImg.naturalWidth > 0) {
+        ctx.drawImage(hurdleImg, o.x, o.y, o.width, o.height);
+      } else {
+        // fallback rectangle if image not loaded
+        ctx.fillStyle = "#e53935";
+        ctx.fillRect(o.x, o.y, o.width, o.height);
+      }
     });
 
     // Coins
@@ -296,10 +307,10 @@
       }
     });
 
-    // HUD inside canvas
+    // HUD
     drawHUD();
 
-    // Game over text (also inside the frame)
+    // Game over text
     if (gameState === "gameOver") {
       ctx.fillStyle = "#fff";
       ctx.font = "32px system-ui, sans-serif";
